@@ -1,84 +1,97 @@
 """
-Calcul factorial paralel folosind multiprocessing.
-
-Tema 1: calculează n! simultan pentru mai multe valori,
-folosind atât multiprocessing.Queue + Process cât și ProcessPoolExecutor.
+Calcul factorial paralel cu multiprocessing.Queue + Process
+și cu concurrent.futures.ProcessPoolExecutor.
 """
 
+from __future__ import annotations
 import multiprocessing
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 
-# TODO: Implementează funcția factorial
+# ─── Funcție de bază ──────────────────────────────────────────────────────────
+
 def factorial(n: int) -> int:
-    """Calculează n! (factorial).
-
-    Args:
-        n: Numărul pentru care se calculează factorialul. Trebuie să fie >= 0.
-
-    Returns:
-        n! ca întreg.
-
-    Raises:
-        ValueError: Dacă n este negativ.
-
-    Exemple:
-        factorial(0) == 1
-        factorial(1) == 1
-        factorial(5) == 120
-    """
-    raise NotImplementedError("De implementat")
+    """Calculează n! iterativ. factorial(0) = factorial(1) = 1."""
+    if n <= 1:
+        return 1
+    result = 1
+    for i in range(2, n + 1):
+        result *= i
+    return result
 
 
-def _worker_factorial(input_queue: multiprocessing.Queue, output_queue: multiprocessing.Queue) -> None:
-    """Funcție worker pentru procesul multiprocessing.
+# ─── Worker (module-level — necesar pentru pickling pe Windows) ───────────────
 
-    Citește valori din input_queue, calculează factorialul și trimite
-    rezultatele în output_queue sub forma (n, factorial(n)).
-
-    Se oprește când primește None din input_queue.
-
-    Args:
-        input_queue: Coada de unde se citesc valorile n.
-        output_queue: Coada unde se trimit perechile (n, rezultat).
-    """
-    # TODO: Implementează bucla worker
-    raise NotImplementedError("De implementat")
+def _worker_factorial(input_queue: multiprocessing.Queue,
+                      output_queue: multiprocessing.Queue) -> None:
+    """Consumă valori din input_queue, calculează n!, trimite în output_queue."""
+    while True:
+        n = input_queue.get()
+        if n is None:          # sentinel de oprire
+            break
+        output_queue.put((n, factorial(n)))
 
 
-# TODO: Implementează funcția parallel_factorial_multiprocessing
+# ─── Implementări paralele ────────────────────────────────────────────────────
+
 def parallel_factorial_multiprocessing(values: list[int]) -> dict[int, int]:
-    """Calculează factorialul pentru mai multe valori în paralel.
-
-    Folosește 4 procese worker cu multiprocessing.Queue și multiprocessing.Process.
-
-    Args:
-        values: Lista valorilor pentru care se calculează factorialul.
-
-    Returns:
-        Dict {n: factorial(n)} pentru toate valorile din lista.
-
-    Exemplu:
-        result = parallel_factorial_multiprocessing([5, 6, 7, 8])
-        # {5: 120, 6: 720, 7: 5040, 8: 40320}
     """
-    raise NotImplementedError("De implementat")
+    Calculează factorialele în paralel cu 4 procese și multiprocessing.Queue.
+
+    Arhitectură:
+      1. input_queue + output_queue
+      2. 4 procese Process(target=_worker_factorial)
+      3. toate valorile → input_queue
+      4. None × 4 → input_queue (semnale de oprire)
+      5. colectare rezultate din output_queue
+    """
+    num_workers = 4
+    input_queue:  multiprocessing.Queue = multiprocessing.Queue()
+    output_queue: multiprocessing.Queue = multiprocessing.Queue()
+
+    processes = [
+        multiprocessing.Process(
+            target=_worker_factorial,
+            args=(input_queue, output_queue)
+        )
+        for _ in range(num_workers)
+    ]
+
+    for p in processes:
+        p.start()
+
+    # Trimitem valorile de procesate
+    for v in values:
+        input_queue.put(v)
+
+    # Semnale de oprire — unul per worker
+    for _ in range(num_workers):
+        input_queue.put(None)
+
+    # Colectăm exact len(values) rezultate
+    results: dict[int, int] = {}
+    for _ in values:
+        n, fact = output_queue.get()
+        results[n] = fact
+
+    for p in processes:
+        p.join()
+
+    return results
 
 
-# TODO: Implementează funcția parallel_factorial_futures
 def parallel_factorial_futures(values: list[int]) -> dict[int, int]:
-    """Calculează factorialul pentru mai multe valori în paralel.
-
-    Folosește concurrent.futures.ProcessPoolExecutor cu max_workers=4.
-
-    Args:
-        values: Lista valorilor pentru care se calculează factorialul.
-
-    Returns:
-        Dict {n: factorial(n)} pentru toate valorile din lista.
-
-    Exemplu:
-        result = parallel_factorial_futures([5, 6, 7, 8])
-        # {5: 120, 6: 720, 7: 5040, 8: 40320}
     """
-    raise NotImplementedError("De implementat")
+    Calculează factorialele în paralel cu ProcessPoolExecutor (max_workers=4).
+
+    Fiecare valoare este trimisă ca job separat; rezultatele se colectează
+    pe măsură ce se termină (as_completed).
+    """
+    results: dict[int, int] = {}
+    with ProcessPoolExecutor(max_workers=4) as executor:
+        # Mapăm fiecare future la valoarea sa de intrare
+        future_to_n = {executor.submit(factorial, n): n for n in values}
+        for future in as_completed(future_to_n):
+            n = future_to_n[future]
+            results[n] = future.result()
+    return results

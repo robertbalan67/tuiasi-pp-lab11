@@ -1,95 +1,72 @@
 """
-Pipeline de procesare paralelă a fișierelor.
+Pipeline de procesare fișiere cu ThreadPoolExecutor.
 
-Tema 2: procesează mai multe fișiere simultan în 3 etape:
-1. Citire conținut
-2. Numărare cuvinte
-3. Scriere rezultat
+Fiecare fișier trece prin 3 etape:
+  read_file → count_words → write_result (JSON)
 """
 
+from __future__ import annotations
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 
-# TODO: Implementează funcția read_file
+# ─── Funcții individuale ──────────────────────────────────────────────────────
+
 def read_file(path: str) -> str:
-    """Citește conținutul unui fișier text.
-
-    Args:
-        path: Calea absolută sau relativă a fișierului.
-
-    Returns:
-        Conținutul fișierului ca string.
-
-    Raises:
-        FileNotFoundError: Dacă fișierul nu există.
-        IOError: La erori de citire.
-    """
-    raise NotImplementedError("De implementat")
+    """Citește și returnează conținutul unui fișier text UTF-8."""
+    with open(path, encoding="utf-8") as f:
+        return f.read()
 
 
-# TODO: Implementează funcția count_words
 def count_words(text: str) -> dict[str, int]:
-    """Numără frecvența fiecărui cuvânt din text.
-
-    Cuvintele sunt separate prin spații și/sau newline-uri.
-    Comparația este case-sensitive (nu se face lowercase).
-
-    Args:
-        text: Textul de analizat.
-
-    Returns:
-        Dict {cuvânt: număr_apariții}.
-
-    Exemple:
-        count_words("ana are mere") == {'ana': 1, 'are': 1, 'mere': 1}
-        count_words("a a b") == {'a': 2, 'b': 1}
-        count_words("") == {}
     """
-    raise NotImplementedError("De implementat")
-
-
-# TODO: Implementează funcția write_result
-def write_result(result: dict, output_path: str) -> None:
-    """Scrie rezultatul numărării cuvintelor în fișier JSON.
-
-    Args:
-        result: Dict-ul {cuvânt: frecvență} de scris.
-        output_path: Calea fișierului de ieșire.
-    """
-    raise NotImplementedError("De implementat")
-
-
-def _process_single_file(args: tuple[str, str]) -> None:
-    """Procesează un singur fișier prin cele 3 etape.
-
-    Args:
-        args: Tuplu (input_path, output_path).
-    """
-    # TODO: Implementează procesarea unui fișier individual
-    # 1. Citește conținutul
-    # 2. Numără cuvintele
-    # 3. Scrie rezultatul
-    raise NotImplementedError("De implementat")
-
-
-# TODO: Implementează funcția process_files_pipeline
-def process_files_pipeline(input_paths: list[str], output_dir: str) -> None:
-    """Procesează mai multe fișiere în paralel folosind un pipeline cu ThreadPoolExecutor.
-
-    Fișierele sunt procesate simultan (nu secvențial).
-    Fișierul de ieșire are același nume ca cel de intrare, cu extensia .json.
-
-    Args:
-        input_paths: Lista căilor fișierelor de intrare.
-        output_dir: Directorul unde se scriu fișierele de ieșire.
+    Numără frecvența cuvintelor din text.
+    Separatori: spații și newline-uri (orice whitespace).
 
     Exemplu:
-        process_files_pipeline(
-            ["/tmp/doc1.txt", "/tmp/doc2.txt"],
-            "/tmp/output/"
-        )
+        count_words("ana are mere") == {'ana': 1, 'are': 1, 'mere': 1}
+        count_words("a a b")        == {'a': 2, 'b': 1}
+        count_words("")             == {}
+    """
+    if not text or not text.strip():
+        return {}
+    counts: dict[str, int] = {}
+    for word in text.split():
+        counts[word] = counts.get(word, 0) + 1
+    return counts
+
+
+def write_result(result: dict, output_path: str) -> None:
+    """Scrie result-ul în format JSON la output_path."""
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+
+
+# ─── Pipeline paralel ─────────────────────────────────────────────────────────
+
+def process_files_pipeline(input_paths: list[str], output_dir: str) -> None:
+    """
+    Procesează mai multe fișiere simultan cu ThreadPoolExecutor.
+
+    Pentru fiecare cale din input_paths:
+      1. read_file(path)  → text
+      2. count_words(text) → dict de frecvențe
+      3. write_result(dict, output_dir/<basename>.json) → fișier JSON
+
+    Exemplu:
+        process_files_pipeline(["/tmp/doc1.txt", "/tmp/doc2.txt"], "/tmp/output/")
         # Creează /tmp/output/doc1.json și /tmp/output/doc2.json
     """
-    raise NotImplementedError("De implementat")
+    os.makedirs(output_dir, exist_ok=True)
+
+    def _process_single(path: str) -> None:
+        text       = read_file(path)
+        word_counts = count_words(text)
+        base       = os.path.splitext(os.path.basename(path))[0]
+        out_path   = os.path.join(output_dir, f"{base}.json")
+        write_result(word_counts, out_path)
+
+    with ThreadPoolExecutor() as executor:
+        # map() garantează că excepțiile sunt propagate și așteptăm finalizarea
+        list(executor.map(_process_single, input_paths))
